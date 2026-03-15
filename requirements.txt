@@ -3,3 +3,4 @@ python-pptx
 pymupdf
 requests
 plotly
+streamlit-authenticator

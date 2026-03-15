@@ -1,106 +1,151 @@
 import streamlit as st
+import streamlit_authenticator as stauth
 from pptx import Presentation
 import fitz
 import requests
 import re
 
-st.set_page_config(page_title="Hackathon PPT AI Judge", layout="wide")
+# -----------------------
+# PAGE CONFIG
+# -----------------------
 
-st.title("Hackathon PPT AI Judge")
-st.write("Upload your hackathon presentation and AI will evaluate it.")
+st.set_page_config(
+    page_title="AI Hackathon Judge",
+    layout="wide"
+)
 
-uploaded_file = st.file_uploader("Upload PPT or PDF", type=["pptx","pdf"])
+# -----------------------
+# MAC STYLE CSS
+# -----------------------
 
+st.markdown("""
+<style>
 
-# -------- Extract slides from PPT --------
+body {
+background-color: #f5f5f7;
+}
 
-def extract_slides_ppt(file):
+.main {
+background-color: white;
+padding: 2rem;
+border-radius: 14px;
+box-shadow: 0px 4px 20px rgba(0,0,0,0.08);
+}
 
-    prs = Presentation(file)
-    slides = []
+h1 {
+font-weight:600;
+}
 
-    for i, slide in enumerate(prs.slides):
+.stButton>button {
+border-radius:10px;
+background:#0071e3;
+color:white;
+}
 
-        slide_text = ""
-
-        for shape in slide.shapes:
-            if hasattr(shape, "text"):
-                slide_text += shape.text + "\n"
-
-        slides.append({
-            "slide_number": i+1,
-            "text": slide_text
-        })
-
-    return slides
-
-
-# -------- Extract slides from PDF --------
-
-def extract_slides_pdf(file):
-
-    slides = []
-
-    pdf = fitz.open(stream=file.read(), filetype="pdf")
-
-    for i,page in enumerate(pdf):
-
-        slides.append({
-            "slide_number": i+1,
-            "text": page.get_text()
-        })
-
-    return slides
+</style>
+""", unsafe_allow_html=True)
 
 
-# -------- Evaluate slide --------
+# -----------------------
+# LOGIN SYSTEM
+# -----------------------
 
-def evaluate_slide(text):
+names = ["Admin"]
+usernames = ["admin"]
 
-    prompt = f"""
+passwords = ["admin123"]
+
+hashed_passwords = stauth.Hasher(passwords).generate()
+
+authenticator = stauth.Authenticate(
+names,
+usernames,
+hashed_passwords,
+"ai_judge_cookie",
+"abcdef",
+cookie_expiry_days=30
+)
+
+name, authentication_status, username = authenticator.login("Login","main")
+
+if authentication_status == False:
+    st.error("Username or password incorrect")
+
+if authentication_status == None:
+    st.warning("Please login")
+
+if authentication_status:
+
+    authenticator.logout("Logout", "sidebar")
+
+    st.sidebar.success(f"Welcome {name}")
+
+    st.title("AI Hackathon PPT Judge")
+
+    uploaded_file = st.file_uploader("Upload PPT or PDF", type=["pptx","pdf"])
+
+
+# -----------------------
+# PPT TEXT EXTRACTION
+# -----------------------
+
+    def extract_ppt(file):
+
+        prs = Presentation(file)
+
+        text = ""
+
+        for slide in prs.slides:
+
+            for shape in slide.shapes:
+
+                if hasattr(shape,"text"):
+                    text += shape.text + "\n"
+
+        return text
+
+
+# -----------------------
+# PDF EXTRACTION
+# -----------------------
+
+    def extract_pdf(file):
+
+        pdf = fitz.open(stream=file.read(), filetype="pdf")
+
+        text = ""
+
+        for page in pdf:
+            text += page.get_text()
+
+        return text
+
+
+# -----------------------
+# GROQ AI
+# -----------------------
+
+    def evaluate(text):
+
+        url = "https://api.groq.com/openai/v1/chat/completions"
+
+        headers = {
+            "Authorization": "Bearer " + st.secrets.get("GROQ_API_KEY", ""),
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model":"llama3-70b-8192",
+            "messages":[
+                {
+                    "role":"user",
+                    "content":f"""
+
 You are a hackathon judge.
 
-Analyze this slide and identify what type of slide it is:
+Evaluate the presentation:
 
-Problem
-Solution
-Architecture
-Implementation
-Impact
-Other
-
-Then evaluate its quality.
-
-Return exactly:
-
-Slide Type: TYPE
-Score: X/10
-Suggestion: improvement suggestion
-
-Slide Content:
-{text}
-"""
-
-    response = requests.post(
-        "http://localhost:11434/api/generate",
-        json={
-            "model": "llama3",
-            "prompt": prompt,
-            "stream": False
-        }
-    )
-
-    return response.json()["response"]
-
-
-# -------- Overall evaluation --------
-
-def evaluate_presentation(text):
-
-    prompt = f"""
-You are a hackathon jury member.
-
-Evaluate this presentation based on:
+Score these categories:
 
 Problem
 Innovation
@@ -109,7 +154,7 @@ Impact
 Implementation
 Presentation
 
-Return exactly:
+Return format:
 
 Problem: X/10
 Innovation: X/10
@@ -123,130 +168,104 @@ Suggestions:
 - suggestion
 - suggestion
 
-Presentation Content:
 {text}
 """
-
-    response = requests.post(
-        "http://localhost:11434/api/generate",
-        json={
-            "model": "llama3",
-            "prompt": prompt,
-            "stream": False
+                }
+            ]
         }
-    )
 
-    return response.json()["response"]
+        response = requests.post(url,headers=headers,json=payload)
 
-
-# -------- Parse scores --------
-
-def parse_scores(result):
-
-    scores = {
-        "Problem": int(re.search(r"Problem:\s*(\d+)", result).group(1)),
-        "Innovation": int(re.search(r"Innovation:\s*(\d+)", result).group(1)),
-        "Feasibility": int(re.search(r"Feasibility:\s*(\d+)", result).group(1)),
-        "Impact": int(re.search(r"Impact:\s*(\d+)", result).group(1)),
-        "Implementation": int(re.search(r"Implementation:\s*(\d+)", result).group(1)),
-        "Presentation": int(re.search(r"Presentation:\s*(\d+)", result).group(1))
-    }
-
-    return scores
+        try:
+            return response.json()["choices"][0]["message"]["content"]
+        except Exception as e:
+            st.error(f"Error in AI response: {e}")
+            return ""
 
 
-# -------- Parse suggestions --------
+# -----------------------
+# SCORE PARSER
+# -----------------------
 
-def parse_suggestions(result):
+    def parse_scores(result):
 
-    suggestions = []
-
-    if "Suggestions:" in result:
-
-        part = result.split("Suggestions:")[1]
-
-        lines = part.split("\n")
-
-        for line in lines:
-            if "-" in line:
-                suggestions.append(line.replace("-", "").strip())
-
-    return suggestions
-
-
-# -------- Main logic --------
-
-if uploaded_file:
-
-    if uploaded_file.name.endswith(".pptx"):
-        slides = extract_slides_ppt(uploaded_file)
-    else:
-        slides = extract_slides_pdf(uploaded_file)
+        scores = {}
+        try:
+            scores["Problem"] = int(re.search(r"Problem:\s*(\d+)", result).group(1))
+            scores["Innovation"] = int(re.search(r"Innovation:\s*(\d+)", result).group(1))
+            scores["Feasibility"] = int(re.search(r"Feasibility:\s*(\d+)", result).group(1))
+            scores["Impact"] = int(re.search(r"Impact:\s*(\d+)", result).group(1))
+            scores["Implementation"] = int(re.search(r"Implementation:\s*(\d+)", result).group(1))
+            scores["Presentation"] = int(re.search(r"Presentation:\s*(\d+)", result).group(1))
+        except Exception as e:
+            st.error(f"Error parsing scores: {e}")
+            scores = {k: 0 for k in ["Problem", "Innovation", "Feasibility", "Impact", "Implementation", "Presentation"]}
+        return scores
 
 
-    full_text = ""
+# -----------------------
+# MAIN
+# -----------------------
 
-    for slide in slides:
-        full_text += slide["text"] + "\n"
+    if uploaded_file:
 
+        if uploaded_file.name.endswith(".pptx"):
+            text = extract_ppt(uploaded_file)
 
-    st.subheader("AI Evaluation Running...")
-
-    result = evaluate_presentation(full_text)
-
-    scores = parse_scores(result)
-
-    suggestions = parse_suggestions(result)
+        else:
+            text = extract_pdf(uploaded_file)
 
 
-    # -------- Score cards --------
+        with st.spinner("AI evaluating presentation..."):
 
-    st.subheader("Score Summary")
-
-    col1,col2,col3 = st.columns(3)
-
-    with col1:
-        st.metric("Problem",f"{scores['Problem']}/10")
-        st.metric("Impact",f"{scores['Impact']}/10")
-
-    with col2:
-        st.metric("Innovation",f"{scores['Innovation']}/10")
-        st.metric("Implementation",f"{scores['Implementation']}/10")
-
-    with col3:
-        st.metric("Feasibility",f"{scores['Feasibility']}/10")
-        st.metric("Presentation",f"{scores['Presentation']}/10")
+            result = evaluate(text)
 
 
-    # -------- Selection probability --------
+        scores = parse_scores(result)
 
-    total_score = sum(scores.values())
+        total = sum(scores.values())
 
-    probability = int((total_score/60)*100)
-
-    st.subheader("Selection Probability")
-
-    st.progress(probability/100)
-
-    st.write(f"### {probability}% Chance of Selection")
+        probability = int((total/60)*100)
 
 
-    # -------- Suggestions --------
+# -----------------------
+# SCORE CARDS
+# -----------------------
 
-    st.subheader("💡 Jury Suggestions")
+        st.subheader("Score Summary")
 
-    for tip in suggestions:
-        st.info(tip)
+        col1,col2,col3 = st.columns(3)
+
+        col1.metric("Problem",f"{scores['Problem']}/10")
+        col2.metric("Innovation",f"{scores['Innovation']}/10")
+        col3.metric("Feasibility",f"{scores['Feasibility']}/10")
+
+        col1.metric("Impact",f"{scores['Impact']}/10")
+        col2.metric("Implementation",f"{scores['Implementation']}/10")
+        col3.metric("Presentation",f"{scores['Presentation']}/10")
 
 
-    # -------- Slide analysis --------
+# -----------------------
+# PROBABILITY
+# -----------------------
 
-    st.subheader("Slide-by-Slide Analysis")
+        st.subheader("Selection Probability")
 
-    for slide in slides:
+        st.progress(probability/100)
 
-        st.markdown(f"### Slide {slide['slide_number']}")
+        st.write(f"### {probability}% Chance of Selection")
 
-        result = evaluate_slide(slide["text"])
 
-        st.info(result)
+# -----------------------
+# SUGGESTIONS
+# -----------------------
+
+        if "Suggestions:" in result:
+
+            tips = result.split("Suggestions:")[1].split("\n")
+
+            st.subheader("Jury Suggestions")
+
+            for t in tips:
+                if "-" in t:
+                    st.info(t.replace("-","").strip())
