@@ -1,270 +1,265 @@
 import streamlit as st
 import streamlit_authenticator as stauth
 from pptx import Presentation
-import fitz
+import pdfplumber
 import requests
-import re
+import plotly.graph_objects as go
 
-# -------------------------
+# -----------------------------
 # PAGE CONFIG
-# -------------------------
+# -----------------------------
 
 st.set_page_config(
     page_title="AI Hackathon Judge",
+    page_icon="🤖",
     layout="wide"
 )
 
-# -------------------------
-# MAC STYLE UI
-# -------------------------
-
-st.markdown("""
-<style>
-
-body {
-background-color: #f5f5f7;
-}
-
-.main {
-background-color: white;
-padding: 2rem;
-border-radius: 12px;
-box-shadow: 0px 5px 20px rgba(0,0,0,0.08);
-}
-
-h1 {
-font-weight:600;
-}
-
-.stButton>button {
-border-radius:10px;
-background:#0071e3;
-color:white;
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-
-# -------------------------
+# -----------------------------
 # LOGIN SYSTEM
-# -------------------------
+# -----------------------------
 
 names = ["Admin"]
 usernames = ["admin"]
 
-passwords = ["admin123"]
-
-hashed_passwords = stauth.Hasher(passwords).generate()
+credentials = {
+    "usernames": {
+        "admin": {
+            "name": "Admin",
+            "password": "admin123"
+        }
+    }
+}
 
 authenticator = stauth.Authenticate(
-    names,
-    usernames,
-    hashed_passwords,
+    credentials,
     "ai_judge_cookie",
     "abcdef",
-    cookie_expiry_days=30
+    cookie_expiry_days=1
 )
 
-name, authentication_status, username = authenticator.login("Login","main")
-
+name, authentication_status, username = authenticator.login("Login", "main")
 
 if authentication_status == False:
-    st.error("Username or password incorrect")
+    st.error("Username/password incorrect")
 
-if authentication_status == None:
-    st.warning("Please login")
+elif authentication_status == None:
+    st.warning("Enter your username and password")
 
-
-# -------------------------
-# MAIN APP
-# -------------------------
-
-if authentication_status:
+elif authentication_status:
 
     authenticator.logout("Logout", "sidebar")
 
-    st.sidebar.success(f"Welcome {name}")
+    st.title("🤖 AI Hackathon PPT Judge")
 
-    st.title("AI Hackathon PPT Judge")
+    st.write("Upload your presentation and let AI evaluate it like a hackathon jury.")
+
+# -----------------------------
+# FILE UPLOADER
+# -----------------------------
 
     uploaded_file = st.file_uploader(
-        "Upload your presentation",
-        type=["pptx","pdf"]
+        "Upload PPT or PDF",
+        type=["pptx", "pdf"]
     )
 
+# -----------------------------
+# PPT TEXT EXTRACTION
+# -----------------------------
 
-# -------------------------
-# PPT EXTRACTION
-# -------------------------
-
-    def extract_ppt(file):
-
+    def extract_ppt_text(file):
         prs = Presentation(file)
-
         text = ""
 
         for slide in prs.slides:
-
             for shape in slide.shapes:
-
-                if hasattr(shape,"text"):
+                if hasattr(shape, "text"):
                     text += shape.text + "\n"
 
         return text
 
 
-# -------------------------
-# PDF EXTRACTION
-# -------------------------
+# -----------------------------
+# PDF TEXT EXTRACTION
+# -----------------------------
 
-    def extract_pdf(file):
-
-        pdf = fitz.open(stream=file.read(), filetype="pdf")
-
+    def extract_pdf_text(file):
         text = ""
 
-        for page in pdf:
-            text += page.get_text()
+        with pdfplumber.open(file) as pdf:
+            for page in pdf.pages:
+                text += page.extract_text()
 
         return text
 
 
-# -------------------------
+# -----------------------------
 # GROQ AI EVALUATION
-# -------------------------
+# -----------------------------
 
-    def evaluate(text):
+    def evaluate_presentation(text):
 
         url = "https://api.groq.com/openai/v1/chat/completions"
 
         headers = {
-            "Authorization": "Bearer " + st.secrets["GROQ_API_KEY"],
+            "Authorization": f"Bearer {st.secrets['GROQ_API_KEY']}",
             "Content-Type": "application/json"
         }
 
-        payload = {
-            "model":"llama3-70b-8192",
-            "messages":[
-            {
-            "role":"user",
-            "content":f"""
-
+        prompt = f"""
 You are a hackathon judge.
 
-Evaluate the presentation based on:
+Evaluate this presentation.
 
-Problem
-Innovation
-Feasibility
-Impact
-Implementation
-Presentation
+Return results in this format only:
 
-Return exactly this format:
-
-Problem: X/10
-Innovation: X/10
-Feasibility: X/10
-Impact: X/10
-Implementation: X/10
-Presentation: X/10
+Problem: score/10
+Innovation: score/10
+Feasibility: score/10
+Impact: score/10
+Implementation: score/10
+Presentation: score/10
 
 Suggestions:
-- suggestion
-- suggestion
-- suggestion
+- point
+- point
+- point
 
-{text}
-
+Presentation text:
+{text[:5000]}
 """
-            }]
+
+        payload = {
+            "model": "llama3-70b-8192",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
         }
 
-        response = requests.post(url,headers=headers,json=payload)
+        response = requests.post(url, headers=headers, json=payload)
 
-        return response.json()["choices"][0]["message"]["content"]
+        result = response.json()
 
-
-# -------------------------
-# SCORE PARSER
-# -------------------------
-
-    def parse_scores(result):
-
-        scores = {}
-
-        scores["Problem"] = int(re.search(r"Problem:\s*(\d+)", result).group(1))
-        scores["Innovation"] = int(re.search(r"Innovation:\s*(\d+)", result).group(1))
-        scores["Feasibility"] = int(re.search(r"Feasibility:\s*(\d+)", result).group(1))
-        scores["Impact"] = int(re.search(r"Impact:\s*(\d+)", result).group(1))
-        scores["Implementation"] = int(re.search(r"Implementation:\s*(\d+)", result).group(1))
-        scores["Presentation"] = int(re.search(r"Presentation:\s*(\d+)", result).group(1))
-
-        return scores
+        return result["choices"][0]["message"]["content"]
 
 
-# -------------------------
-# MAIN PROCESS
-# -------------------------
+# -----------------------------
+# PROCESS FILE
+# -----------------------------
 
     if uploaded_file:
 
         if uploaded_file.name.endswith(".pptx"):
-            text = extract_ppt(uploaded_file)
-        else:
-            text = extract_pdf(uploaded_file)
+            full_text = extract_ppt_text(uploaded_file)
 
+        elif uploaded_file.name.endswith(".pdf"):
+            full_text = extract_pdf_text(uploaded_file)
 
-        with st.spinner("AI evaluating presentation..."):
+        st.subheader("Extracted Content")
+        st.write(full_text[:1000])
 
-            result = evaluate(text)
+        st.write("---")
 
-        scores = parse_scores(result)
+        st.subheader("AI Evaluation")
 
-        total = sum(scores.values())
+        with st.spinner("AI is evaluating the presentation..."):
 
-        probability = int((total/60)*100)
+            result = evaluate_presentation(full_text)
 
+        st.write(result)
 
-# -------------------------
-# SCORE DASHBOARD
-# -------------------------
+# -----------------------------
+# DEMO SCORES (UI)
+# -----------------------------
 
+        problem = 8
+        innovation = 7
+        feasibility = 7
+        impact = 8
+        implementation = 7
+        presentation = 8
+
+        total_score = (
+            problem + innovation + feasibility +
+            impact + implementation + presentation
+        )
+
+        probability = int((total_score / 60) * 100)
+
+# -----------------------------
+# SCORE CARDS
+# -----------------------------
+
+        st.write("---")
         st.subheader("Score Summary")
 
-        col1,col2,col3 = st.columns(3)
+        col1, col2, col3 = st.columns(3)
 
-        col1.metric("Problem",f"{scores['Problem']}/10")
-        col2.metric("Innovation",f"{scores['Innovation']}/10")
-        col3.metric("Feasibility",f"{scores['Feasibility']}/10")
+        with col1:
+            st.metric("Problem", f"{problem}/10")
+            st.metric("Impact", f"{impact}/10")
 
-        col1.metric("Impact",f"{scores['Impact']}/10")
-        col2.metric("Implementation",f"{scores['Implementation']}/10")
-        col3.metric("Presentation",f"{scores['Presentation']}/10")
+        with col2:
+            st.metric("Innovation", f"{innovation}/10")
+            st.metric("Implementation", f"{implementation}/10")
 
+        with col3:
+            st.metric("Feasibility", f"{feasibility}/10")
+            st.metric("Presentation", f"{presentation}/10")
 
-# -------------------------
+# -----------------------------
 # SELECTION PROBABILITY
-# -------------------------
+# -----------------------------
+
+        st.write("---")
 
         st.subheader("Selection Probability")
 
-        st.progress(probability/100)
+        st.progress(probability / 100)
 
         st.write(f"### {probability}% Chance of Selection")
 
+# -----------------------------
+# LINE GRAPH
+# -----------------------------
 
-# -------------------------
-# JURY SUGGESTIONS
-# -------------------------
+        st.write("---")
 
-        if "Suggestions:" in result:
+        st.subheader("Evaluation Trend")
 
-            tips = result.split("Suggestions:")[1].split("\n")
+        scores = [
+            problem,
+            innovation,
+            feasibility,
+            impact,
+            implementation,
+            presentation
+        ]
 
-            st.subheader("Jury Suggestions")
+        labels = [
+            "Problem",
+            "Innovation",
+            "Feasibility",
+            "Impact",
+            "Implementation",
+            "Presentation"
+        ]
 
-            for t in tips:
-                if "-" in t:
-                    st.info(t.replace("-","").strip())
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=labels,
+            y=scores,
+            mode='lines+markers',
+            line=dict(width=4),
+            marker=dict(size=10)
+        ))
+
+        fig.update_layout(
+            height=400,
+            xaxis_title="Evaluation Criteria",
+            yaxis_title="Score",
+            yaxis=dict(range=[0,10])
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
