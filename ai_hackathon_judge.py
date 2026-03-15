@@ -5,18 +5,18 @@ import fitz
 import requests
 import re
 
-# -----------------------
+# -------------------------
 # PAGE CONFIG
-# -----------------------
+# -------------------------
 
 st.set_page_config(
     page_title="AI Hackathon Judge",
     layout="wide"
 )
 
-# -----------------------
-# MAC STYLE CSS
-# -----------------------
+# -------------------------
+# MAC STYLE UI
+# -------------------------
 
 st.markdown("""
 <style>
@@ -28,8 +28,8 @@ background-color: #f5f5f7;
 .main {
 background-color: white;
 padding: 2rem;
-border-radius: 14px;
-box-shadow: 0px 4px 20px rgba(0,0,0,0.08);
+border-radius: 12px;
+box-shadow: 0px 5px 20px rgba(0,0,0,0.08);
 }
 
 h1 {
@@ -46,33 +46,39 @@ color:white;
 """, unsafe_allow_html=True)
 
 
-# -----------------------
+# -------------------------
 # LOGIN SYSTEM
-# -----------------------
+# -------------------------
 
 names = ["Admin"]
 usernames = ["admin"]
 
 passwords = ["admin123"]
 
-hashed_passwords = stauth.Hasher(passwords).generate()
+hashed_passwords = stauth.Hasher(passwords).hash()
 
 authenticator = stauth.Authenticate(
-names,
-usernames,
-hashed_passwords,
-"ai_judge_cookie",
-"abcdef",
-cookie_expiry_days=30
+    names,
+    usernames,
+    hashed_passwords,
+    "ai_judge_cookie",
+    "abcdef",
+    cookie_expiry_days=30
 )
 
 name, authentication_status, username = authenticator.login("Login","main")
+
 
 if authentication_status == False:
     st.error("Username or password incorrect")
 
 if authentication_status == None:
     st.warning("Please login")
+
+
+# -------------------------
+# MAIN APP
+# -------------------------
 
 if authentication_status:
 
@@ -82,12 +88,15 @@ if authentication_status:
 
     st.title("AI Hackathon PPT Judge")
 
-    uploaded_file = st.file_uploader("Upload PPT or PDF", type=["pptx","pdf"])
+    uploaded_file = st.file_uploader(
+        "Upload your presentation",
+        type=["pptx","pdf"]
+    )
 
 
-# -----------------------
-# PPT TEXT EXTRACTION
-# -----------------------
+# -------------------------
+# PPT EXTRACTION
+# -------------------------
 
     def extract_ppt(file):
 
@@ -105,9 +114,9 @@ if authentication_status:
         return text
 
 
-# -----------------------
+# -------------------------
 # PDF EXTRACTION
-# -----------------------
+# -------------------------
 
     def extract_pdf(file):
 
@@ -121,31 +130,29 @@ if authentication_status:
         return text
 
 
-# -----------------------
-# GROQ AI
-# -----------------------
+# -------------------------
+# GROQ AI EVALUATION
+# -------------------------
 
     def evaluate(text):
 
         url = "https://api.groq.com/openai/v1/chat/completions"
 
         headers = {
-            "Authorization": "Bearer " + st.secrets.get("GROQ_API_KEY", ""),
+            "Authorization": "Bearer " + st.secrets["GROQ_API_KEY"],
             "Content-Type": "application/json"
         }
 
         payload = {
             "model":"llama3-70b-8192",
             "messages":[
-                {
-                    "role":"user",
-                    "content":f"""
+            {
+            "role":"user",
+            "content":f"""
 
 You are a hackathon judge.
 
-Evaluate the presentation:
-
-Score these categories:
+Evaluate the presentation based on:
 
 Problem
 Innovation
@@ -154,7 +161,7 @@ Impact
 Implementation
 Presentation
 
-Return format:
+Return exactly this format:
 
 Problem: X/10
 Innovation: X/10
@@ -169,49 +176,42 @@ Suggestions:
 - suggestion
 
 {text}
+
 """
-                }
-            ]
+            }]
         }
 
         response = requests.post(url,headers=headers,json=payload)
 
-        try:
-            return response.json()["choices"][0]["message"]["content"]
-        except Exception as e:
-            st.error(f"Error in AI response: {e}")
-            return ""
+        return response.json()["choices"][0]["message"]["content"]
 
 
-# -----------------------
+# -------------------------
 # SCORE PARSER
-# -----------------------
+# -------------------------
 
     def parse_scores(result):
 
         scores = {}
-        try:
-            scores["Problem"] = int(re.search(r"Problem:\s*(\d+)", result).group(1))
-            scores["Innovation"] = int(re.search(r"Innovation:\s*(\d+)", result).group(1))
-            scores["Feasibility"] = int(re.search(r"Feasibility:\s*(\d+)", result).group(1))
-            scores["Impact"] = int(re.search(r"Impact:\s*(\d+)", result).group(1))
-            scores["Implementation"] = int(re.search(r"Implementation:\s*(\d+)", result).group(1))
-            scores["Presentation"] = int(re.search(r"Presentation:\s*(\d+)", result).group(1))
-        except Exception as e:
-            st.error(f"Error parsing scores: {e}")
-            scores = {k: 0 for k in ["Problem", "Innovation", "Feasibility", "Impact", "Implementation", "Presentation"]}
+
+        scores["Problem"] = int(re.search(r"Problem:\s*(\d+)", result).group(1))
+        scores["Innovation"] = int(re.search(r"Innovation:\s*(\d+)", result).group(1))
+        scores["Feasibility"] = int(re.search(r"Feasibility:\s*(\d+)", result).group(1))
+        scores["Impact"] = int(re.search(r"Impact:\s*(\d+)", result).group(1))
+        scores["Implementation"] = int(re.search(r"Implementation:\s*(\d+)", result).group(1))
+        scores["Presentation"] = int(re.search(r"Presentation:\s*(\d+)", result).group(1))
+
         return scores
 
 
-# -----------------------
-# MAIN
-# -----------------------
+# -------------------------
+# MAIN PROCESS
+# -------------------------
 
     if uploaded_file:
 
         if uploaded_file.name.endswith(".pptx"):
             text = extract_ppt(uploaded_file)
-
         else:
             text = extract_pdf(uploaded_file)
 
@@ -220,7 +220,6 @@ Suggestions:
 
             result = evaluate(text)
 
-
         scores = parse_scores(result)
 
         total = sum(scores.values())
@@ -228,9 +227,9 @@ Suggestions:
         probability = int((total/60)*100)
 
 
-# -----------------------
-# SCORE CARDS
-# -----------------------
+# -------------------------
+# SCORE DASHBOARD
+# -------------------------
 
         st.subheader("Score Summary")
 
@@ -245,9 +244,9 @@ Suggestions:
         col3.metric("Presentation",f"{scores['Presentation']}/10")
 
 
-# -----------------------
-# PROBABILITY
-# -----------------------
+# -------------------------
+# SELECTION PROBABILITY
+# -------------------------
 
         st.subheader("Selection Probability")
 
@@ -256,9 +255,9 @@ Suggestions:
         st.write(f"### {probability}% Chance of Selection")
 
 
-# -----------------------
-# SUGGESTIONS
-# -----------------------
+# -------------------------
+# JURY SUGGESTIONS
+# -------------------------
 
         if "Suggestions:" in result:
 
