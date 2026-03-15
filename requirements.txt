@@ -1,6 +1,6 @@
 streamlit
-python-pptx
-pymupdf
-requests
-plotly
 streamlit-authenticator
+python-pptx
+pdfplumber
+plotly
+requests
