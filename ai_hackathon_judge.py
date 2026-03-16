@@ -3,7 +3,6 @@ from pptx import Presentation
 import pdfplumber
 import requests
 import plotly.graph_objects as go
-import numpy as np
 
 # -----------------------------
 # PAGE CONFIG
@@ -43,7 +42,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # -----------------------------
-# HEADER
+# APP HEADER
 # -----------------------------
 
 st.title("🤖 AI Hackathon PPT Judge")
@@ -93,7 +92,7 @@ def extract_pdf_text(file):
     return text
 
 # -----------------------------
-# AI EVALUATION (GROQ)
+# GROQ AI EVALUATION
 # -----------------------------
 
 def evaluate_presentation(text):
@@ -126,8 +125,10 @@ Presentation:
 """
 
     payload = {
-        "model": "llama3-70b-8192",
-        "messages": [{"role": "user", "content": prompt}],
+        "model": "llama-3.1-70b-versatile",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
         "temperature": 0.3
     }
 
@@ -161,7 +162,7 @@ def extract_scores(text):
     for key in scores:
         if key in text:
             try:
-                scores[key] = int(text.split(key+":")[1].split()[0])
+                scores[key] = int(text.split(key + ":")[1].split()[0])
             except:
                 pass
 
@@ -249,7 +250,6 @@ if uploaded_file:
 # -----------------------------
 
     st.write("---")
-
     st.subheader("Selection Probability")
 
     st.progress(probability / 100)
@@ -291,9 +291,6 @@ if uploaded_file:
     ]
 
     values += values[:1]
-
-    angles = np.linspace(0, 2*np.pi, len(labels), endpoint=False).tolist()
-    angles += angles[:1]
 
     fig = go.Figure()
 
